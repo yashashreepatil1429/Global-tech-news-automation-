@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Global Tech News | Test Dashboard</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: #152238;
+      background: #f2f5fa;
+      font-synthesis: none;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header {
+      padding: 30px max(22px, calc((100% - 1120px) / 2));
+      color: #fff;
+      background: linear-gradient(120deg, #142b50, #176b87);
+    }
+    header h1 { margin: 0 0 7px; font-size: clamp(1.5rem, 4vw, 2.2rem); }
+    header p { margin: 0; color: #d7e9f2; }
+    main { max-width: 1120px; margin: 24px auto; padding: 0 20px 40px; }
+    .toolbar, .panel, .article-card {
+      border: 1px solid #dce4ee;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 4px 16px #16324f0b;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+      padding: 16px;
+    }
+    .health { margin-right: auto; font-weight: 650; }
+    .health::before {
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      margin-right: 8px;
+      border-radius: 50%;
+      background: #8793a3;
+      content: "";
+    }
+    .health[data-state="ok"]::before { background: #138a58; }
+    .health[data-state="error"]::before { background: #d04747; }
+    button, input, select {
+      min-height: 40px;
+      border: 1px solid #c8d3e0;
+      border-radius: 7px;
+      background: #fff;
+      color: inherit;
+      font: inherit;
+    }
+    input, select { padding: 8px 10px; }
+    button {
+      padding: 8px 14px;
+      border-color: #1a6985;
+      background: #1a6985;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover { background: #14566e; }
+    button.secondary { background: #fff; color: #1a6985; }
+    button:disabled { cursor: wait; opacity: .65; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, .9fr); gap: 20px; }
+    .panel { min-width: 0; padding: 20px; }
+    .automation-panel { margin-bottom: 20px; }
+    .automation-form {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      gap: 10px;
+    }
+    .automation-form label { display: grid; flex: 1 1 220px; gap: 6px; font-weight: 600; }
+    .automation-form select { width: 100%; }
+    .automation-state { margin: 13px 0 0; color: #465467; }
+    .automation-state.error { color: #a92b2b; }
+    .warning { margin: 12px 0 0; color: #745617; font-size: .9rem; line-height: 1.5; }
+    h2 { margin: 0 0 14px; font-size: 1.2rem; }
+    .filters { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 16px; }
+    .filters input { flex: 1 1 180px; }
+    .filters select { flex: 0 1 210px; }
+    .message { color: #5c6878; }
+    .message.error { color: #a92b2b; }
+    .results-meta { margin: 0 0 12px; color: #5c6878; font-size: .9rem; }
+    .article-list { display: grid; gap: 12px; }
+    .article-card { padding: 15px; box-shadow: none; }
+    .article-card h3 { margin: 0 0 8px; font-size: 1.04rem; line-height: 1.4; }
+    .article-card h3 a { color: #155b78; text-decoration: none; }
+    .article-card h3 a:hover { text-decoration: underline; }
+    .article-card p { margin: 8px 0; color: #465467; line-height: 1.5; }
+    .meta { display: flex; flex-wrap: wrap; gap: 7px 14px; color: #637185; font-size: .83rem; }
+    .tag { color: #155b78; font-weight: 650; }
+    .briefing-controls { display: grid; gap: 10px; margin-bottom: 14px; }
+    .briefing-controls input, .briefing-controls button { width: 100%; }
+    pre {
+      overflow: auto;
+      max-height: 65vh;
+      margin: 0;
+      padding: 14px;
+      border-radius: 8px;
+      background: #f4f7fb;
+      color: #203047;
+      font: .88rem/1.6 "Cascadia Code", Consolas, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .links { display: flex; gap: 16px; margin-top: 16px; font-size: .9rem; }
+    .links a { color: #155b78; }
+    @media (max-width: 760px) {
+      .grid { grid-template-columns: 1fr; }
+      .toolbar { align-items: stretch; }
+      .health { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Daily Global Tech News</h1>
+    <p>A simple dashboard for trying the news and briefing API.</p>
+  </header>
+  <main>
+    <section class="toolbar" aria-label="API status and page controls">
+      <span class="health" id="health-status" data-state="checking">Checking API and database…</span>
+      <button class="secondary" id="check-health" type="button">Check health</button>
+      <button id="refresh-news" type="button">Load latest news</button>
+    </section>
+
+    <section class="panel automation-panel" aria-labelledby="automation-heading">
+      <h2 id="automation-heading">Automatic news refresh</h2>
+      <form class="automation-form" id="automation-form">
+        <label for="refresh-interval">
+          Refresh interval
+          <select id="refresh-interval" name="interval">
+            <option value="1_minute">Every 1 minute</option>
+            <option value="5_minutes">Every 5 minutes</option>
+            <option value="1_hour">Every 1 hour</option>
+            <option value="1_day">Every 1 day</option>
+          </select>
+        </label>
+        <button type="submit" id="start-automation">Start automatic refresh</button>
+        <button class="secondary" type="button" id="stop-automation">Stop</button>
+      </form>
+      <p class="automation-state" id="automation-status" aria-live="polite">Checking automatic refresh…</p>
+      <p class="warning">Starting this schedule immediately fetches news, then repeats at the selected interval while this API server stays running. Frequent GNews requests may use your daily quota quickly. A GNews or database error is shown here and in the server terminal.</p>
+    </section>
+
+    <div class="grid">
+      <section class="panel" aria-labelledby="news-heading">
+        <h2 id="news-heading">Saved news</h2>
+        <form class="filters" id="news-form">
+          <input id="keyword" name="keyword" type="search" maxlength="100" placeholder="Search title, summary, or category">
+          <select id="category" name="category" aria-label="Filter by category">
+            <option value="">All categories</option>
+            {% for category in categories %}
+            <option value="{{ category }}">{{ category }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit">Search / filter</button>
+        </form>
+        <p class="results-meta" id="news-count" aria-live="polite"></p>
+        <div class="article-list" id="news-results" aria-live="polite">
+          <p class="message">Choose “Load latest news” to see saved articles.</p>
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="briefing-heading">
+        <h2 id="briefing-heading">Saved daily briefing</h2>
+        <form class="briefing-controls" id="briefing-form">
+          <label for="briefing-date">Briefing date</label>
+          <input id="briefing-date" name="date" type="date" required>
+          <button type="submit">Load briefing</button>
+        </form>
+        <div id="briefing-result" aria-live="polite">
+          <p class="message">Choose a date to load a saved briefing.</p>
+        </div>
+      </section>
+    </div>
+
+    <nav class="links" aria-label="API links">
+      <a href="/docs" target="_blank" rel="noopener">API documentation</a>
+      <a href="/health" target="_blank" rel="noopener">Raw health response</a>
+    </nav>
+  </main>
+
+  <script>
+    const healthStatus = document.getElementById("health-status");
+    const newsResults = document.getElementById("news-results");
+    const newsCount = document.getElementById("news-count");
+    const briefingResult = document.getElementById("briefing-result");
+    const automationStatus = document.getElementById("automation-status");
+    let lastSeenRunId = null;
+    let statusRequestActive = false;
+
+    function showMessage(container, message, isError = false) {
+      const paragraph = document.createElement("p");
+      paragraph.className = isError ? "message error" : "message";
+      paragraph.textContent = message;
+      container.replaceChildren(paragraph);
+    }
+
+    async function getJson(url) {
+      const response = await fetch(url);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || `Request failed (${response.status}).`);
+      }
+      return data;
+    }
+
+    async function checkHealth() {
+      healthStatus.dataset.state = "checking";
+      healthStatus.textContent = "Checking API and database…";
+      try {
+        const data = await getJson("/health");
+        healthStatus.dataset.state = "ok";
+        healthStatus.textContent = `API online · database ${data.database}`;
+      } catch (error) {
+        healthStatus.dataset.state = "error";
+        healthStatus.textContent = `Not ready · ${error.message}`;
+      }
+    }
+
+    function renderArticles(data) {
+      newsResults.replaceChildren();
+      newsCount.textContent = `${data.total} saved article(s)`;
+      if (!data.items.length) {
+        showMessage(newsResults, "No saved articles match this request.");
+        return;
+      }
+
+      for (const article of data.items) {
+        const card = document.createElement("article");
+        card.className = "article-card";
+        const heading = document.createElement("h3");
+        const link = document.createElement("a");
+        link.textContent = article.title || "Untitled article";
+        try {
+          const articleUrl = new URL(article.url);
+          if (["http:", "https:"].includes(articleUrl.protocol)) {
+            link.href = articleUrl.href;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+          }
+        } catch (_) {
+          link.removeAttribute("href");
+        }
+        heading.append(link);
+
+        const summary = document.createElement("p");
+        summary.textContent = article.description || "No description provided.";
+        const metadata = document.createElement("div");
+        metadata.className = "meta";
+        const category = document.createElement("span");
+        category.className = "tag";
+        category.textContent = article.category || "Uncategorized";
+        const source = document.createElement("span");
+        source.textContent = article.source || "Unknown source";
+        const published = document.createElement("span");
+        published.textContent = article.published_at
+          ? new Date(article.published_at).toLocaleString()
+          : "Publication time unavailable";
+        metadata.append(category, source, published);
+        card.append(heading, summary, metadata);
+        newsResults.append(card);
+      }
+    }
+
+    async function loadNews(event) {
+      if (event) event.preventDefault();
+      const keyword = document.getElementById("keyword").value.trim();
+      const category = document.getElementById("category").value;
+      const params = new URLSearchParams({ page: "1", per_page: "20" });
+      let endpoint = "/news";
+      if (keyword) {
+        endpoint = "/news/search";
+        params.set("keyword", keyword);
+      }
+      if (category) {
+        endpoint = `/news/category/${encodeURIComponent(category)}`;
+      }
+
+      showMessage(newsResults, "Loading saved news…");
+      try {
+        const data = await getJson(`${endpoint}?${params}`);
+        renderArticles(data);
+      } catch (error) {
+        newsCount.textContent = "";
+        showMessage(newsResults, error.message, true);
+      }
+    }
+
+    async function loadBriefing(event) {
+      if (event) event.preventDefault();
+      await loadBriefingForDate(document.getElementById("briefing-date").value);
+    }
+
+    async function loadBriefingForDate(date) {
+      if (!date) return;
+      showMessage(briefingResult, "Loading saved briefing…");
+      try {
+        const data = await getJson(`/briefings/${encodeURIComponent(date)}`);
+        const pre = document.createElement("pre");
+        pre.textContent = data.text || JSON.stringify(data, null, 2);
+        briefingResult.replaceChildren(pre);
+      } catch (error) {
+        showMessage(briefingResult, error.message, true);
+      }
+    }
+
+    async function updateAutomationStatus() {
+      if (statusRequestActive) return;
+      statusRequestActive = true;
+      try {
+        const status = await getJson("/automation");
+        const runId = status.last_run_id || 0;
+        const hasNewRun = lastSeenRunId === null
+          ? runId > 0
+          : runId > lastSeenRunId;
+        if (hasNewRun) {
+          if (status.last_success) {
+            await loadNews();
+            document.getElementById("briefing-date").value =
+              status.last_success.briefing_date;
+            await loadBriefingForDate(status.last_success.briefing_date);
+          }
+        }
+        lastSeenRunId = runId;
+
+        if (!status.running) {
+          automationStatus.className = "automation-state";
+          automationStatus.textContent = "Automatic refresh is stopped.";
+        } else if (status.run_in_progress) {
+          automationStatus.className = "automation-state";
+          automationStatus.textContent =
+            `${status.interval_label} · collecting news and updating the briefing…`;
+        } else if (status.last_error) {
+          automationStatus.className = "automation-state error";
+          automationStatus.textContent = status.last_error;
+        } else if (status.last_success) {
+          automationStatus.className = "automation-state";
+          automationStatus.textContent =
+            `${status.interval_label} · last refresh ${new Date(status.last_run_at).toLocaleString()} · ` +
+            `${status.last_success.inserted} new, ${status.last_success.duplicates} duplicates · ` +
+            `next ${new Date(status.next_run_at).toLocaleString()}`;
+        } else {
+          automationStatus.className = "automation-state";
+          automationStatus.textContent =
+            `${status.interval_label} · waiting for first refresh…`;
+        }
+      } catch (error) {
+        automationStatus.className = "automation-state error";
+        automationStatus.textContent = `Could not read refresh status: ${error.message}`;
+      } finally {
+        statusRequestActive = false;
+      }
+    }
+
+    async function startAutomation(event) {
+      event.preventDefault();
+      const button = document.getElementById("start-automation");
+      button.disabled = true;
+      automationStatus.className = "automation-state";
+      automationStatus.textContent = "Starting automatic refresh…";
+      try {
+        const response = await fetch("/automation", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            interval: document.getElementById("refresh-interval").value,
+          }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
+        lastSeenRunId = data.last_run_id || 0;
+        await updateAutomationStatus();
+      } catch (error) {
+        automationStatus.className = "automation-state error";
+        automationStatus.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    async function stopAutomation() {
+      try {
+        const response = await fetch("/automation", { method: "DELETE" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
+        lastSeenRunId = data.last_run_id || 0;
+        await updateAutomationStatus();
+      } catch (error) {
+        automationStatus.className = "automation-state error";
+        automationStatus.textContent = error.message;
+      }
+    }
+
+    document.getElementById("check-health").addEventListener("click", checkHealth);
+    document.getElementById("refresh-news").addEventListener("click", () => loadNews());
+    document.getElementById("news-form").addEventListener("submit", loadNews);
+    document.getElementById("briefing-form").addEventListener("submit", loadBriefing);
+    document.getElementById("automation-form").addEventListener("submit", startAutomation);
+    document.getElementById("stop-automation").addEventListener("click", stopAutomation);
+    document.getElementById("briefing-date").value = new Date().toISOString().slice(0, 10);
+    checkHealth();
+    loadNews();
+    loadBriefingForDate(document.getElementById("briefing-date").value);
+    updateAutomationStatus();
+    window.setInterval(updateAutomationStatus, 3000);
+  </script>
+</body>
+</html>

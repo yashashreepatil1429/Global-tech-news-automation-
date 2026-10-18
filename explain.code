@@ -1,0 +1,316 @@
+DAILY GLOBAL TECH NEWS SCHEDULER
+Project flow and step-by-step explanation
+=========================================
+
+This file explains how the current project works. It reflects the code in
+news_service.py, models.py, database.py, briefing_service.py, scheduler.py,
+interval_scheduler.py, and api.py.
+
+
+1) COMPLETE PROJECT FLOW
+------------------------
+
+There are two ways for the project to start a news workflow:
+
+A. Daily scheduler
+   - Start it with:
+       .\.venv\Scripts\python.exe main.py
+   - main.py starts the blocking APScheduler process.
+   - By default, it runs once every day at 6:00 AM in Asia/Kolkata time.
+   - The hour, minute, and timezone can be configured in .env.
+   - The scheduled job calls scheduler.run_news_workflow().
+
+B. Dashboard interval scheduler
+   - Start the API with:
+       .\.venv\Scripts\python.exe api.py
+   - In the dashboard, select an interval and start automatic refresh, or
+     send POST /automation with JSON such as {"interval":"5_minutes"}.
+   - It runs the workflow immediately, then repeats at the chosen interval.
+   - Its scheduler runs inside the API process and is separate from the daily
+     scheduler in main.py.
+
+Both scheduler options call the same workflow. The workflow proceeds in this
+order:
+
+1. config.py loads settings from environment variables and .env.
+   It provides the GNews API URL/key, MongoDB URI/database name, news query,
+   schedule time, and timezone. Secrets are not meant to be placed in source
+   code.
+
+2. news_service.fetch_latest_news() sends an HTTP request to GNews using
+   Requests. It asks for up to 10 English articles, sorted by publication
+   time. Network errors, unsuccessful HTTP responses, invalid JSON, and
+   unexpected response shapes are reported as errors rather than treated as
+   successful fetches.
+
+3. news_service.py normalizes each usable GNews article into the project's
+   article shape:
+       title, description, source, author, url, category,
+       published_at, collected_at
+   Articles without a usable title or URL are skipped. Dates are converted to
+   timezone-aware UTC datetimes.
+
+4. models.categorize_news() checks the title and description against the
+   editable CATEGORY_KEYWORDS in models.py. It assigns the first matching
+   category, such as Agentic AI, AI, Quantum Computing, Cloud, or Cybersecurity.
+   If no keyword matches, it assigns Other Technology.
+
+5. database.save_news_articles() validates the article list and saves articles
+   in the tech_news.news MongoDB collection. MongoDB's unique URL index rejects
+   articles whose URL is already present. The workflow counts these as
+   duplicates, rather than inserting another copy.
+
+6. briefing_service.generate_daily_briefing() reads saved articles for the
+   briefing date from MongoDB. It de-duplicates URLs for selection, selects at
+   most 15 articles and no more than 3 per category, then groups them by
+   category. Existing importance_score or score values are used if present;
+   category order and newer publication time break ties. No importance score
+   is invented when an article has none.
+
+7. The briefing is formatted and upserted into
+   tech_news.daily_briefings, using briefing_date as its unique key. Re-running
+   the workflow for the same date updates that date's briefing instead of
+   creating another one.
+
+8. The workflow logs the counts and outcome. The dashboard can display updated
+   results after a successful interval run. REST GET requests read saved MongoDB
+   data; they do not independently call GNews or start a news workflow.
+
+Simplified data path:
+
+   APScheduler trigger
+          |
+          v
+   run_news_workflow()
+          |
+          +--> GNews HTTP API --> normalize and categorize articles
+          |                              |
+          |                              v
+          |                       MongoDB: news
+          |                              |
+          +--> generate briefing <-------+
+                         |
+                         v
+                 MongoDB: daily_briefings
+                         |
+                         v
+            Flask REST API / dashboard / Postman
+
+
+2) WHY A SCHEDULER, AND HOW DOES IT TRIGGER PYTHON?
+---------------------------------------------------
+
+A scheduler lets the application run the same Python workflow at a chosen
+time or interval without a person manually starting a fetch each time. It is
+useful for keeping the stored articles and daily briefing up to date.
+
+In scheduler.py, create_scheduler() registers the function with APScheduler:
+
+   scheduler.add_job(
+       run_news_workflow,
+       trigger="cron",
+       hour=config.NEWS_SCHEDULE_HOUR,
+       minute=config.NEWS_SCHEDULE_MINUTE,
+       timezone=ZoneInfo(config.NEWS_SCHEDULE_TIMEZONE),
+       ...
+   )
+
+This does not call run_news_workflow() immediately. It gives APScheduler a
+reference to that Python function and tells it the cron time. Then
+run_scheduler() calls scheduler.start(). BlockingScheduler keeps the
+main.py process alive. At the configured time, APScheduler invokes the
+registered function, which fetches news, saves articles, and creates the
+briefing.
+
+The default is 6:00 AM Asia/Kolkata. To change it, set values in .env, for
+example:
+
+   NEWS_SCHEDULE_HOUR=7
+   NEWS_SCHEDULE_MINUTE=0
+   NEWS_SCHEDULE_TIMEZONE=Asia/Kolkata
+
+Restart main.py after changing .env so the new settings are loaded.
+
+The dashboard scheduler uses BackgroundScheduler instead. When it is started,
+interval_scheduler.py registers _run_interval_workflow, which calls the same
+run_news_workflow(). It sets the first run time to now, so that option runs
+immediately and then repeats every 1 minute, 5 minutes, 1 hour, or 1 day.
+max_instances=1 prevents overlapping copies of the same job in that scheduler.
+
+
+3) WHAT IF THE APPLICATION/SERVER IS STOPPED AT 6 AM AND THE SCHEDULE IS 7 AM?
+------------------------------------------------------------------------------
+
+If the daily scheduler process is running continuously at 7:00 AM, it triggers
+the job and runs the workflow.
+
+If the computer or main.py process is stopped at 7:00 AM, Python is not running
+to receive the scheduler trigger. The news fetch and briefing generation do
+not happen at that time. MongoDB keeps previously saved data, but it does not
+run the Python code itself.
+
+This project uses an in-memory APScheduler setup; it does not configure a
+persistent job store or an operating-system service. After main.py is started
+again, it registers the daily job and waits for the next scheduled time. A run
+missed while the process was stopped is not automatically replayed on restart.
+The configured misfire grace period concerns a delayed job while the scheduler
+is operating; it does not make the stopped application run jobs in its
+absence.
+
+You can run the workflow manually after restarting:
+
+   .\.venv\Scripts\python.exe -c "from scheduler import run_news_workflow; print(run_news_workflow())"
+
+The dashboard interval scheduler has the same process-lifetime limitation.
+If api.py stops, its interval job and in-memory status stop too. Restarting the
+API does not restore the previous interval selection; start the interval again
+from the dashboard or POST /automation. The independent main.py daily
+scheduler can continue if it is still running.
+
+Important: the API server and the daily scheduler are separate processes.
+Stopping one does not automatically stop the other. For automatic operation,
+the process that owns the desired scheduler must remain running, and the
+machine must remain available. A production deployment would normally use a
+reliable always-on host or process manager, but those are outside this
+beginner project.
+
+
+4) HOW ARE DUPLICATE NEWS ARTICLES PREVENTED IN MONGODB?
+--------------------------------------------------------
+
+The article URL is the identity used to prevent duplicate storage:
+
+1. database.connect_to_mongodb() creates a unique index on the "url" field in
+   the "news" collection:
+
+       news_collection.create_index("url", unique=True)
+
+2. database.save_news_articles() checks that each article has a non-empty URL,
+   trims surrounding whitespace, and attempts to insert the article with
+   insert_one().
+
+3. If MongoDB already has that URL, its unique index rejects the insert with
+   DuplicateKeyError. The code catches that specific error and increments the
+   duplicate count; it does not store a second document.
+
+4. The workflow returns and logs inserted and duplicate counts. For example,
+   10 fetched, 7 inserted, and 3 duplicates means three URLs were already in
+   MongoDB.
+
+The database index is the final protection, including if two insert attempts
+happen close together. The briefing selector also ignores repeated URLs in the
+articles it selects. Briefings are separately kept to one document per date by
+a unique briefing_date index and an upsert.
+
+If old MongoDB data already contains duplicate URLs, creation of the unique
+index can fail until those old duplicates are cleaned up.
+
+
+5) HOW DOES NEWS TRAVEL FROM EXTERNAL API TO PYTHON, MONGODB, REST API, AND POSTMAN?
+------------------------------------------------------------------------------------
+
+Step 1 - GNews to Python
+
+   news_service.py
+      -> requests.get(GNEWS_API_URL, params=...)
+      -> GNews returns an HTTP response containing JSON
+
+The request includes the search query, English language, publication-time
+sorting, a maximum of 10 results, and the API key read from configuration.
+The key should be stored in the local .env file as GNEWS_API_KEY, not pasted
+into Python code or shared in Postman URLs.
+
+Step 2 - Python reads and prepares the JSON
+
+news_service.py checks the HTTP result, parses response.json(), reads the
+"articles" list, validates each article, normalizes its fields, records the
+collection time, and assigns a category using models.py. The result is a
+regular Python list of dictionaries. If GNews rejects the request or the
+network/JSON response fails, the workflow reports the failure and does not
+pretend that it stored fresh articles.
+
+Step 3 - Python saves articles in MongoDB
+
+   scheduler.run_news_workflow()
+      -> database.save_news_articles(articles)
+      -> tech_news.news
+
+PyMongo converts each Python dictionary into a MongoDB document. The unique
+URL index handles duplicates. The MongoDB database/collections may appear
+when MongoDB first receives data; connection setup creates the required
+indexes.
+
+Step 4 - Python generates and stores the briefing
+
+   briefing_service.generate_daily_briefing()
+      -> reads articles from tech_news.news
+      -> selects and groups articles
+      -> upserts briefing in tech_news.daily_briefings
+
+Step 5 - Flask REST API reads saved MongoDB data
+
+Start the API in a separate terminal:
+
+   .\.venv\Scripts\python.exe api.py
+
+api.py defines Flask routes. For example, GET /news calls
+database.get_news_page(), which queries MongoDB and returns a JSON response.
+GET /briefings/2026-10-18 looks for a briefing with that date. These GET
+requests do not fetch from GNews; they return whatever has already been saved.
+The API converts MongoDB ObjectId values to strings and Python date/time
+values to ISO-formatted JSON values.
+
+Step 6 - Send a request in Postman
+
+1. Keep MongoDB running.
+2. Keep the process that collects news running (main.py, or the API process
+   with its dashboard interval started), or run the workflow manually once.
+3. Keep api.py running. Its local base URL is http://127.0.0.1:5000.
+4. In Postman, choose GET, enter one of these URLs, and press Send:
+
+       http://127.0.0.1:5000/health
+       http://127.0.0.1:5000/news?page=1&per_page=10
+       http://127.0.0.1:5000/news/search?keyword=python
+       http://127.0.0.1:5000/news/category/AI
+       http://127.0.0.1:5000/briefings
+       http://127.0.0.1:5000/briefings/2026-10-18
+       http://127.0.0.1:5000/docs
+
+5. Inspect the response body. Successful requests return JSON. An empty
+   collection returns a successful response with an empty "items" list and
+   total 0. Invalid parameters return HTTP 400, a missing article/briefing
+   returns HTTP 404, and a database outage returns HTTP 503 with a generic
+   message that does not expose internal details.
+
+GET /health checks the API's MongoDB connection; it does not test whether the
+GNews API key works. A successful health check therefore does not prove that
+GNews fetching is available.
+
+Quick reference:
+
+   GNews JSON
+      -> Requests and Python validation/normalization
+      -> category assignment
+      -> PyMongo insert with unique URL protection
+      -> briefing selection and save
+      -> Flask GET endpoint reads MongoDB
+      -> Postman displays the JSON response
+
+
+RUNNING BOTH DAILY COLLECTION AND REST API
+------------------------------------------
+
+Open two PowerShell terminals in the project folder. Ensure the same .env
+configuration is available to both processes.
+
+Terminal 1 - daily collection scheduler:
+
+   .\.venv\Scripts\python.exe main.py
+
+Terminal 2 - REST API and dashboard:
+
+   .\.venv\Scripts\python.exe api.py
+
+The API can then be tested at http://127.0.0.1:5000 or with Postman. The daily
+scheduler waits for its configured time; it does not automatically perform an
+immediate fetch when main.py starts.
